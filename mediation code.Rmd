@@ -1,0 +1,1185 @@
+---
+title: "Heat wave and Ozone, Mediation analysis on mortality (Meteo France definition)"
+author: "Anna Alari"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r library, include=FALSE}
+library(xlsx)
+library(Hmisc)
+library(lubridate)
+library(effects)
+library(ggplot2)
+library(prettyR)
+library(mgcv)
+library(jtools)
+library(broom)
+library(segmented)
+library(splines)
+library(mgcViz)
+library(ggeffects)
+library(devtools)
+library(zoo)
+library(grid)
+library(mvmeta)
+library(dlnm)
+library(R.utils)
+library(kableExtra)
+library(knitr)
+library(forestplot)
+library("writexl")
+library(metafor)
+library(hrbrthemes)
+library(tidyverse)
+library(ggridges)
+library(viridis)
+library(ggpubr)
+```
+
+```{r database, include=FALSE}
+#load("C:/Users/Anna/Dropbox/Heat wave and O3/data.RData") #Only mortality data
+#load("C:/Users/Anna/Dropbox/Heat wave and O3/complete_data.RData") #Merged mortality and hospitalization data with SpF pollution data
+load("C:/Users/Anna/Dropbox/Heat wave and O3/data/villes.RData")
+
+```
+
+
+```{r datamanagement, include=FALSE}
+# No mortality data for Dijon
+# Because of too many NA, I withdraw Lille for this analysis
+
+villes_2<-list()
+
+for (i in 1:4){
+villes_2[[i]]<- villes[[i]]
+}
+
+for (i in 6:length(villes)){
+villes_2[[i-1]]<- villes[[i]]
+}
+
+villes<-villes_2
+
+cities<-c("bordeaux","clermont","grenoble",
+             "lehavre","lyon","marseille","montpellier",
+             "nancy","nantes","nice","paris","rennes","rouen","strasbourg","toulouse")
+
+names(villes)<-cities
+
+# creation of no2 variable of today and previous day
+#function filter {stats}
+filter<-stats::filter
+for (i in 1:length(villes)){
+villes[[i]]<-transform(villes[[i]], no2moy = as.vector(filter(no2.y,sides = 1, filter = rep(1, 2))/2), no2Lag1=Lag(no2.y,1),no2Lag2=Lag(no2.y,2))
+}  
+
+## reducing database only for years from 2000 to 2015
+for (i in 1:length(villes)){
+  villes[[i]]<-villes[[i]][villes[[i]]$Dates<="2016-01-01",]
+  }
+
+```
+
+## Basic statistics and visualisation of data
+
+### *For temperature*
+
+For Mean temperature
+```{r}
+lapply(villes,function(x){summary(x$tempmoy)})
+```
+
+For Max temperature:
+```{r}
+lapply(villes,function(x){summary(x$tempmax)})
+```
+
+For Min temperature: 
+```{r}
+lapply(villes,function(x){summary(x$tempmin)})
+```
+
+Cities of Le Havre, Marseille, Nancy, Nice, Rennes and Rouen have missind data for temperature. 
+## Imputing Missing data
+
+To manage missing data for temperature I decide to imput missing data values according to these rules: 
+- for mean and minumum temperature, when only one day value is missing, I impute by doing an average of value of previous and following days (expept for Marseille, for which the two NA are two consecutive days). When a longer period is missing (normally, a week), I impute by setting the value as an average between the value of the previous weekend and the following week
+- for maximum temperature, I impute by getting the value for the variable tempmax over 7 days
+
+
+```{r}
+## imputation NA for Marseille
+## imput NA temp max
+villes[["marseille"]]$tempmax[which(is.na(villes[["marseille"]]$tempmax))] <- villes[["marseille"]]$tempmaxmoy7j[which(is.na(villes[["marseille"]]$tempmax))]
+
+## imput NA temp min
+for (r in 2:nrow(villes[["marseille"]])) {
+    mm<-c(villes[["marseille"]]$tempmin[r-2],villes[["marseille"]]$tempmin[r+2])
+    meantt<-mean(mm)
+    villes[["marseille"]]$tempmin[r] <- if (is.na(villes[["marseille"]]$tempmin[r])) meantt else villes[["marseille"]]$tempmin[r]
+  }
+
+## imput NA temp moy
+for (r in 2:nrow(villes[["marseille"]])) {
+    mm<-c(villes[["marseille"]]$tempmoy[r-2],villes[["marseille"]]$tempmoy[r+2])
+    meantt<-mean(mm)
+    villes[["marseille"]]$tempmoy[r] <- if (is.na(villes[["marseille"]]$tempmoy[r])) meantt else villes[["marseille"]]$tempmoy[r]
+  }
+
+## Imputation NA for Nancy
+## imput NA temp max
+villes[["nancy"]]$tempmax[which(is.na(villes[["nancy"]]$tempmax))] <- villes[["nancy"]]$tempmaxmoy7j[which(is.na(villes[["nancy"]]$tempmax))]
+
+## imput NA temp min
+for (r in 2:nrow(villes[["nancy"]])) {
+    mm<-c(villes[["nancy"]]$tempmin[r-1],villes[["nancy"]]$tempmin[r+1])
+    meantt<-mean(mm)
+    villes[["nancy"]]$tempmin[r] <- if (is.na(villes[["nancy"]]$tempmin[r])) meantt else villes[["nancy"]]$tempmin[r]
+  }
+
+## imput NA temp moy
+for (r in 2:nrow(villes[["nancy"]])) {
+    mm<-c(villes[["nancy"]]$tempmoy[r-1],villes[["nancy"]]$tempmoy[r+1])
+    meantt<-mean(mm)
+    villes[["nancy"]]$tempmoy[r] <- if (is.na(villes[["nancy"]]$tempmoy[r])) meantt else villes[["nancy"]]$tempmoy[r]
+  }
+
+## Imputation NA for Nice
+## imput NA temp max
+villes[["nice"]]$tempmax[which(is.na(villes[["nice"]]$tempmax))] <- villes[["nice"]]$tempmaxmoy7j[which(is.na(villes[["nice"]]$tempmax))]
+
+## imput NA temp min
+for (r in 2:nrow(villes[["nice"]])) {
+    mm<-c(villes[["nice"]]$tempmin[r-1],villes[["nice"]]$tempmin[r+1])
+    meantt<-mean(mm)
+    villes[["nice"]]$tempmin[r] <- if (is.na(villes[["nice"]]$tempmin[r])) meantt else villes[["nice"]]$tempmin[r]
+  }
+
+## imput NA temp moy
+for (r in 2:nrow(villes[["nice"]])) {
+    mm<-c(villes[["nice"]]$tempmoy[r-1],villes[["nice"]]$tempmoy[r+1])
+    meantt<-mean(mm)
+    villes[["nice"]]$tempmoy[r] <- if (is.na(villes[["nice"]]$tempmoy[r])) meantt else villes[["nice"]]$tempmoy[r]
+  }
+
+## Imputation NA for Rennes
+## imput NA temp max
+villes[["rennes"]]$tempmax[which(is.na(villes[["rennes"]]$tempmax))] <- villes[["rennes"]]$tempmaxmoy7j[which(is.na(villes[["rennes"]]$tempmax))]
+
+## imput NA temp min
+for (r in 2:nrow(villes[["rennes"]])) {
+    mm<-c(villes[["rennes"]]$tempmin[r-1],villes[["rennes"]]$tempmin[r+1])
+    meantt<-mean(mm)
+    villes[["rennes"]]$tempmin[r] <- if (is.na(villes[["rennes"]]$tempmin[r])) meantt else villes[["rennes"]]$tempmin[r]
+  }
+
+## imput NA temp moy
+for (r in 2:nrow(villes[["rennes"]])) {
+    mm<-c(villes[["rennes"]]$tempmoy[r-1],villes[["rennes"]]$tempmoy[r+1])
+    meantt<-mean(mm)
+    villes[["rennes"]]$tempmoy[r] <- if (is.na(villes[["rennes"]]$tempmoy[r])) meantt else villes[["rennes"]]$tempmoy[r]
+  }
+
+## imputation NA for Le Havre
+## imput NA temp moy 
+villes[["lehavre"]]$tempmax[which(is.na(villes[["lehavre"]]$tempmax))] <- villes[["lehavre"]]$tempmaxmoy7j[which(is.na(villes[["lehavre"]]$tempmax))]
+
+
+## imput NA temp moy 
+# for only one specific day
+villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2000-05-07")]<-mean(villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2000-05-06")],villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2000-05-08")])
+
+villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2003-02-25")]<-mean(villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2003-02-26")],villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates=="2003-02-24")])
+
+# List of longer Period with NA (need of package zoom)
+period1<-as.Date(c(as.Date("2007-10-21"):as.Date("2007-10-27")))
+period2<-as.Date(c(as.Date("2007-11-03"):as.Date("2007-11-09")))
+
+## Previous and following weeks to compute mean value
+period1bef<-as.Date(c(as.Date("2007-10-15"):as.Date("2007-10-20")))
+period1aft<-as.Date(c(as.Date("2007-10-28"):as.Date("2007-11-02")))
+
+period2aft<-as.Date(c(as.Date("2007-11-10"):as.Date("2007-11-15")))
+
+## imput NA tempmoy La Havre
+villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates %in% period1)]<-mean(villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates %in% c(period1bef,period1aft))])
+villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates %in% period2)]<-mean(villes[["lehavre"]]$tempmoy[which(villes[["lehavre"]]$Dates %in% c(period1aft,period2aft))])
+
+## Imput NA tempmin
+# for only one specific day
+villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2000-05-07")]<-mean(villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2000-05-06")],villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2000-05-08")])
+
+villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2003-02-25")]<-mean(villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2003-02-26")],villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates=="2003-02-24")])
+
+## imput NA tempmin La Havre
+villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates %in% period1)]<-mean(villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates %in% c(period1bef,period1aft))])
+villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates %in% period2)]<-mean(villes[["lehavre"]]$tempmin[which(villes[["lehavre"]]$Dates %in% c(period1aft,period2aft))])
+
+
+## imputation NA pour rouen
+villes[["rouen"]]$tempmax[which(is.na(villes[["rouen"]]$tempmax))] <- villes[["rouen"]]$tempmaxmoy7j[which(is.na(villes[["rouen"]]$tempmax))]
+
+## imput NA temp moy 
+# for only one specific day
+villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates=="2004-08-17")]<-mean(villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates=="2004-08-16")],villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates=="2004-08-18")])
+
+# List of longer Period with NA (need of package?)
+period1<-as.Date(c(as.Date("2003-06-14"):as.Date("2003-06-19")))
+period2<-as.Date(c(as.Date("2004-08-03"):as.Date("2004-08-05")))
+period3<-as.Date(c(as.Date("2009-03-17"):as.Date("2009-03-25")))
+
+## Previous and following weeks to compute mean value
+period1bef<-as.Date(c(as.Date("2003-06-08"):as.Date("2003-06-13")))
+period1aft<-as.Date(c(as.Date("2003-06-20"):as.Date("2003-06-25")))
+
+period2bef<-as.Date(c(as.Date("2004-07-29"):as.Date("2004-08-02")))
+period2aft<-as.Date(c(as.Date("2004-08-06"):as.Date("2004-08-11")))
+
+period3bef<-as.Date(c(as.Date("2009-03-11"):as.Date("2009-03-16")))
+period3aft<-as.Date(c(as.Date("2009-03-26"):as.Date("2009-03-30")))
+
+
+## imput tempmoy NA Rouen
+                    
+villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% period1)]<-mean(villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% c(period1bef,period1aft))])
+villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% period2)]<-mean(villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% c(period2bef,period2aft))])
+villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% period3)]<-mean(villes[["rouen"]]$tempmoy[which(villes[["rouen"]]$Dates %in% c(period3bef,period3aft))])
+
+
+```
+
+
+### Definition of Heat Wave threshold
+```{r}
+
+trshld975<-c()
+trshld995<-c()
+
+for (i in 1:length(villes)){
+  trshld975[i]<-quantile(villes[[i]]$tempmoy, probs=c(0.975),na.rm=TRUE)
+  trshld995[i]<-quantile(villes[[i]]$tempmoy, probs=c(0.995),na.rm=TRUE)
+  }
+
+```
+
+### Creation of Heat Wave Variable
+```{r}
+## First condition for heat wave
+for (i in 1:length(villes)){
+  villes[[i]]$heat_wave1<-NA
+  for (r in 3:nrow(villes[[i]])){
+  villes[[i]]$heat_wave1[r]<-  if (villes[[i]]$tempmoy[r] >= trshld975[i] & villes[[i]]$tempmoy[r-1] >= trshld975[i] & villes[[i]]$tempmoy[r-2] >= trshld975[i] ) 1 else 0
+  }}
+
+## Second condition for heat wave
+for (i in 1:length(villes)){
+  for (r in 3:nrow(villes[[i]])){
+  villes[[i]]$heat_wave[r]<-  if (villes[[i]]$heat_wave1[r] == 1 & (villes[[i]]$tempmoy[r] >= trshld995[i] | villes[[i]]$tempmoy[r-1] >= trshld995[i] | villes[[i]]$tempmoy[r-2] >= trshld995[i])) 1 else 0
+  }}
+
+```
+
+See if heat wave variable is OK:
+```{r}
+lapply(villes,function(x){summary(x$heat_wave)})
+```
+
+```{r}
+villes[[2]][which(is.na(villes[[2]]$heat_wave)),]
+```
+
+
+The two first days of our study period have NAs (in Januray), but it's fine because we will work only with summer data. 
+
+Number of Heat Wave for each city:
+
+```{r number_h_w, echo=FALSE}
+tt<-matrix(NA, nrow = length(villes), ncol = 2)
+
+for (i in 1:length(villes)){
+  tt[i,]<-table(villes[[i]]$heat_wave) 
+}
+
+rownames(tt)<-cities
+colnames(tt)<-c('Heat wave=0','Heat wave=1')
+
+kable(tt)%>%kable_styling(bootstrap_options = "striped", full_width = F)%>%
+  column_spec(1, bold = T, border_right = T)
+
+tt<-data.frame(tt)
+
+tt[,1]<-c(cities)
+colnames(tt)<-c('City','N Heat wave')
+
+write_xlsx(tt,"C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/N_heat_waves.xlsx")
+
+
+
+```
+
+table of N obs of heat wave per month:
+```{r check, echo=FALSE}
+lapply(villes, function(x) {table(x$mois,x$heat_wave)})
+
+```
+
+Heat wave events occured only in the period going from June until August. 
+
+### Creating Database only with summer months
+```{r summer, echo=FALSE}
+villes_s<-list()
+
+for(i in 1:length(villes)) {
+  villes_s[[i]]<-villes[[i]][villes[[i]]$saison=="summer",]
+  villes_s[[i]]$temps <- ave(villes_s[[i]]$time,villes_s[[i]]$annee,  FUN = seq_along)
+  }
+
+names(villes_s)<-cities
+```
+
+***table of N obs per months to check to have only summer month***
+```{r check, echo=FALSE}
+for (i in 1:length(villes)){
+print(table(villes_s[[i]]$mois))
+}
+```
+
+### *To account for TREND and SAISONNALITY* 
+Creation of a variable for day of the season, going from 1 at the 1st of June of every year and until 122 for 30th of september (except of bisextiles years, 2000 and 2004). 
+
+```{r}
+
+for (i in 1:length(villes_s)){
+villes_s[[i]]$day<-ifelse(villes_s[[i]]$annee %in% c("2000","2004"),as.numeric(strftime(villes_s[[i]]$Dates,format="%j"))-152,as.numeric(strftime(villes_s[[i]]$Dates, format = "%j"))-151)   
+ }
+
+lapply(villes_s,function(x){summary(x$day)})
+
+## Create a variable going for the year going from 1 in 2000 to 16 in 2015
+for (i in 1:length(villes_s)){
+villes_s[[i]]$year<-year(villes_s[[i]]$Dates)-1999
+}
+
+lapply(villes_s,function(x){summary(x$year)})
+
+
+```
+
+<p>&nbsp;</p>
+
+### Descriptive Statistics
+
+Number of Observations for each urban agglomeration: 
+```{r, echo=FALSE}
+## see number of observations
+nobs<-matrix(NA,ncol=2,nrow=15)
+for (i in (1:length(villes_s))){
+villes_sna<-na.omit(villes_s[[i]][,c("nocc_tot","cv_tot","respi_tot", "heat_wave","o3","no2moy","Jours","Vacances","hol","mois")])
+nobs[i,1]<-cities[i]
+nobs[i,2]<-nrow(villes_sna)
+}
+
+nobs<-as.data.frame(nobs)
+
+kable(nobs)%>%  kable_styling(bootstrap_options = c("hover", "bordered"),full_width = F)
+
+
+#write_xlsx(nobs,"C:/Users/Anna/Dropbox/Heat wave and O3/redaction/Tables/nobs.xlsx")
+
+```
+
+
+```{r, echo=FALSE,warning=FALSE}
+#creation of a unique database
+# uniform variable names
+villes_s[["toulouse"]] <- villes_s[["toulouse"]]%>% rename("tempmaxmoy7j"="tempmaxmoy") 
+
+#unique table
+uni<-rbind(villes_s[[1]],villes_s[[2]],villes_s[[3]],villes_s[[4]],villes_s[[5]],villes_s[[6]],villes_s[[7]],villes_s[[8]],villes_s[[9]],villes_s[[10]],villes_s[[11]],villes_s[[12]],villes_s[[13]],villes_s[[14]],villes_s[[15]])
+
+# imputing missing data for city
+uni$city[which(is.na(uni$city))]<-as.character(uni$Zone[which(is.na(uni$city))])
+#View(uni[which(is.na(uni$city)),])
+uni<-uni %>% group_by(city)
+
+
+# summary table
+
+tabdesc<-uni %>% summarise(
+  'Temp 25 Perc'=quantile(tempmoy)[2],
+  'Mean Temp'=mean(tempmoy),
+  'Temp 75 Perc'=quantile(tempmoy)[4],
+  'o3 25 Perc'=quantile(o3,na.rm=TRUE)[2],
+  'Mean o3'=mean(o3,na.rm=TRUE),
+  'o3 75 Perc'=quantile(o3,na.rm=TRUE)[4]
+    )
+
+tabdesc[,2:7]<-round(tabdesc[,2:7],digits = 2)
+tabdesc %>% kable(caption = "Temperature and Ozone statistics per City") %>% kable_styling(bootstrap_options = c("hover", "condensed","bordered"),full_width = F)%>% add_header_above(c(" ", "Temperature" = 3, "Ozone" = 3))%>%
+  column_spec(1, bold = T, border_right = T)%>%
+  column_spec(4, border_right = T)
+
+
+#write_xlsx(tabdesc,"C:/Users/Anna/Dropbox/Heat wave and O3/redaction/Tables/stat_desc.xlsx")
+
+```
+
+#### Temperatures Distribution
+```{r, echo=FALSE, warning=FALSE}
+library(gdata)
+order<-c("nice","montpellier","marseille","rouen","rennes","nantes","lehavre","bordeaux","strasbourg","nancy","lyon","grenoble","clermont","toulouse","paris")
+
+uni$city<-as.factor(uni$city)
+uni$city <- reorder.factor(uni$city, new.order=order)
+
+# uni<-uni %>% 
+#   mutate(Species = factor(Species, levels = rev(myorder)))
+
+ggplot(uni, aes(x = tempmoy, y = city, fill=..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "B") + xlab("Temperature [°C]") + 
+  ylab("Urban Agglomeration") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+
+ggsave("C:/Users/Anna/Dropbox/Heat wave and O3/redaction/Corrected version/Figures/temp_plot2.png", width = 20, height = 15, units = "cm")
+#labs(title = 'Summer Temperatures')
+
+```
+
+#### Ozone concentrations Distribution
+
+```{r, echo=FALSE,warning=FALSE}
+
+ggplot(uni, aes(x = o3, y = city, fill=..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "D") + xlab("Ozone [µg/m3]") + 
+  ylab("Urban Agglomeration") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+ggsave("C:/Users/Anna/Dropbox/Heat wave and O3/redaction/Corrected version/Figures/o3_plot2.png", width = 20, height = 15, units = "cm")
+
+
+# rect <- data.frame(xmin=as.Date(c("2000-06-01","2001-06-01","2002-06-01","2003-06-01","2004-06-01","2005-06-01","2006-06-01","2007-06-01","2008-06-01","2009-06-01","2010-06-01","2011-06-01","2012-06-01","2013-06-01","2014-06-01","2015-06-01")),xmax=as.Date(c("2000-09-30","2001-09-30", "2002-09-30", "2003-09-30", "2004-09-30", "2005-09-30","2006-09-30","2007-09-30","2008-09-30","2009-09-30","2010-09-30","2011-09-30","2012-09-30","2013-09-30","2014-09-30","2015-09-30")), ymin=rep(-Inf,16), ymax=rep(Inf,16))
+# 
+# p <- ggplot(villes[[1]], aes(x=Dates, y=tempmoy)) +
+#   geom_line( color="#69b3a2") + 
+#   xlab("") +ylab("temperature") +
+#   theme_ipsum() +
+#   theme(axis.text.x=element_text(angle=60, hjust=1)) + geom_rect(data=rect, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), size=NA, fill="darkgray", alpha=0.5, inherit.aes = FALSE)
+# 
+# p <- ggplot(villes[[1]], aes(x=Dates, y=o3)) +
+#   geom_line( color="#69b3a2") + 
+#   xlab("") +ylab("ozone") +
+#   theme_ipsum() +
+#   theme(axis.text.x=element_text(angle=60, hjust=1)) + geom_rect(data=rect, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), size=NA, fill="darkgray", alpha=0.5, inherit.aes = FALSE)
+
+```
+
+
+#### Description of Mortality
+
+Total number of non-accidental, cardiovascual and respiratory deaths:
+```{r, echo=FALSE}
+
+sum(uni$nocc_tot, na.rm=TRUE)
+sum(uni$cv_tot, na.rm=TRUE)
+sum(uni$respi_tot, na.rm=TRUE)
+
+```
+
+
+```{r, echo=FALSE,warning=FALSE}
+
+uni$heat_wave<-as.factor(uni$heat_wave)
+
+uni<-na.omit(uni[,c("nocc_tot","cv_tot","respi_tot","city", "heat_wave","o3","no2moy","Jours","Vacances","hol","mois")])
+
+
+tabmort<-uni %>% group_by(heat_wave, city) %>% summarise(
+  'Minimum Nocc'=min(nocc_tot),
+  'M Nocc'=mean(nocc_tot),
+  'Max Nocc'=max(nocc_tot),
+  'Minimum Cv'=min(cv_tot),
+  'M Cv'=mean(cv_tot),
+  'Max Cv'=max(cv_tot),
+  'Minimum Respi'=min(respi_tot),
+  'M Respi'=mean(respi_tot),
+  'Max Respi'=max(respi_tot),
+    )
+
+tabmortnhw<-tabmort[1:15,-1]
+tabmortnhw %>% kable(caption = "Mortality per City During non Heat-wave days") %>% kable_styling(bootstrap_options = c("hover", "condensed","bordered"),full_width = F)%>% add_header_above(c(" ", "Non Accidental Causes" = 3, "Cardiovascual Causes" = 3, "Respiratory causes"=3))%>%
+  column_spec(1, bold = T, border_right = T)%>%
+  column_spec(4, border_right = T)%>%
+  column_spec(7, border_right = T)
+
+tabmorthw<-tabmort[16:30,-1]
+tabmorthw %>% kable(caption = "Mortality per City During Heat-wave days") %>% kable_styling(bootstrap_options = c("hover", "condensed","bordered"),full_width = F)%>% add_header_above(c(" ", "Non Accidental Causes" = 3, "Cardiovascual Causes" = 3, "Respiratory causes"=3))%>%
+  column_spec(1, bold = T, border_right = T)%>%
+  column_spec(4, border_right = T)%>%
+  column_spec(7, border_right = T)
+
+write_xlsx(tabmort,"C:/Users/Anna/Dropbox/Heat wave and O3/redaction/Tables/stat_mort.xlsx")
+
+
+```
+
+#### *Non accidental Mortality*
+
+```{r,echo=FALSE,warning=FALSE}
+
+order<-c("paris","toulouse","clermont","grenoble","lyon","nancy","strasbourg","bordeaux","lehavre","nantes","rennes","rouen","marseille","montpellier","nice")
+
+uni$city<-as.factor(uni$city)
+uni$city <- reorder.factor(uni$city, new.order=order)
+
+## To save with dimension 700x600
+ggplot(uni, aes(x="", y=nocc_tot, fill=heat_wave)) + 
+    geom_boxplot() + xlab("")+ ylab("Non accidental Deaths")+ 
+  labs(x = "",fill="Heat Wave") +
+  scale_fill_manual(labels = c("No", "Yes"),values = c("cadetblue3", "coral")) +
+    facet_wrap(~city, scale="free")
+
+```
+
+#### *Cardiovascular Mortality*
+
+```{r,echo=FALSE,warning=FALSE}
+
+ggplot(uni, aes(x="", y=cv_tot, fill=heat_wave)) + 
+    geom_boxplot() + xlab("")+ ylab("Cardiovascular Deaths")+ 
+  labs(x = "", fill="Heat Wave") +
+  scale_fill_manual(labels = c("No", "Yes"),values = c("cadetblue3", "coral"))+
+    facet_wrap(~city, scale="free")
+
+```
+
+#### *Respiratory Mortality*
+
+```{r,echo=FALSE,warning=FALSE}
+
+ggplot(uni, aes(x="", y=respi_tot, fill=heat_wave)) + 
+    geom_boxplot() + xlab("")+ ylab("Respiratory Deaths")+ 
+  labs(x = "", fill="Heat Wave") +
+  scale_fill_manual(labels = c("No", "Yes"),values = c("cadetblue3", "coral")) +
+    facet_wrap(~city, scale="free")
+
+```
+
+#### Define climate groups
+
+```{r, echo=FALSE,warning=FALSE}
+oceanic<-cities[c(1,4,9,12,13)]
+temperate_oceanic<-cities[c(11,15)]
+mediterraean<-cities[c(6,7,10)]
+semi_continental<-cities[-c(1,4,9,12,13,11,15,6,7,10)]
+
+```
+
+
+## Analysis On Non-Accidental Mortality
+
+### BOOTSTRAP METHOD
+
+
+***Code:*** 
+```{r boot}
+# some data management
+ for (i in 1:length(villes_s)){
+   villes_s[[i]]$time<-1:nrow(villes_s[[i]]) # Create a new variable for time 
+ } 
+   
+
+  # start bootstrap
+     
+  nreps=700 #number of bootstrap reps
+  results<-matrix(NA,nrow = 15,ncol=11)
+  colnames(results)<-c("city","NDE","NDE_2.5","NDE_97.5","NIE","NIE_2.5","NIE_97.5","PMM","TE","TE_2.5","TE_97.5")
+  
+for (i in (1:length(villes_s))){
+  boot.nde<- rep(NA,nreps)
+  boot.nie <- rep(NA,nreps)
+  boot.pmm <- rep(NA,nreps)
+  boot.te <- rep(NA,nreps)
+  for (rep in 1:nreps)
+      
+    {
+      dat_resample <- sample(1:nrow(villes_s[[i]]),nrow(villes_s[[i]]),replace=T)
+      dat_boot <- villes_s[[i]][dat_resample,]
+        
+      # outcome model - Poisson Regression: Mortality, HW and O3
+      m.outcome<-glm(nocc_tot~heat_wave+o3+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot,family=quasipoisson)
+      
+      # mediator model - multinomial linear regression
+      m.mediator<-lm(o3~heat_wave+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot) 
+      
+      # save coefficients
+      theta1<-coef(m.outcome)[2]
+      
+      theta2<-coef(m.outcome)[3]
+     
+      beta1<-coef(m.mediator)[2]
+      
+      # estimate CDE and NIE
+      
+      boot.nde[rep] <- exp(theta1) #NDE
+      
+      boot.nie[rep] <-exp(theta2*beta1) #NIE 
+      
+      boot.te[rep] <- boot.nde[rep]*boot.nie[rep] # TE
+      
+      boot.pmm[rep] <-boot.nde[rep]*(boot.nie[rep]-1)/(boot.nde[rep]*boot.nie[rep]-1) #NIE 
+                   
+      
+    } #end bootstrap
+
+  results[i,1]<-cities[[i]]
+  results[i,2]<-median(boot.nde, na.rm=T)
+  results[i,3]<-quantile(boot.nde, 0.025, na.rm=T)
+  results[i,4]<-quantile(boot.nde, 0.975, na.rm=T)
+  results[i,5]<-median(boot.nie, na.rm=T)
+  results[i,6]<-quantile(boot.nie, 0.025, na.rm=T)
+  results[i,7]<-quantile(boot.nie, 0.975, na.rm=T)
+  results[i,8]<-median(boot.pmm, na.rm=T)
+  results[i,9]<-median(boot.te, na.rm=T)
+  results[i,10]<-quantile(boot.te, 0.025, na.rm=T)
+  results[i,11]<-quantile(boot.te, 0.975, na.rm=T)     
+    }
+  
+  # output CDE and NIE and confidence intervals
+  
+```
+
+***Results:***
+
+```{r boot_res}
+
+res<-data.frame(results)
+
+for (i in (2:11)){
+res[,i]<-as.numeric(as.character(res[,i]))
+}
+
+res[,2:11]<-round(res[,2:11],digits = 4)
+
+# Sorting results according to the climate profile
+res$climate<-ifelse (res$city %in% oceanic,"oceanic", ifelse (res$city %in% temperate_oceanic,"temperate_oceanic", ifelse (res$city %in% mediterraean,"mediterranean","semi_continental")))
+
+res<-res[order(res$climate, decreasing = TRUE),]
+
+
+kable(res[,-12])%>%kable_styling()%>%
+  column_spec(2, bold = T, border_right = T)%>%
+  column_spec(5, border_right = T)%>%
+  column_spec(8, border_right = T)%>%
+  column_spec(9, border_right = T)%>%
+  pack_rows("Temperate Oceanic", 1, 2) %>%
+  pack_rows("Semi-Continental", 3, 7)%>%
+  pack_rows("Oceanic", 8, 12)%>%
+  pack_rows("Mediterranean", 13, 15)
+
+write_xlsx(res,"C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/mortality/nonaccidental/updated_results.xlsx")
+
+```
+
+### Meta-Analysis and Forestplot
+
+***Total Effect*** 
+```{r, echo=FALSE}
+
+#Compute Standard errors :
+
+res$se_te<-(res$TE_97.5 - res$TE_2.5)/3.92
+
+# Meta-analysis
+nocc_te<-rma(TE,sei=se_te,data=res)
+
+print(nocc_te)
+
+#Forestplot
+forest(nocc_te, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab="TE", header="City according to the climate")
+text(-0.3, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+
+
+```
+
+
+***Natural Direct Effect***
+```{r, echo=FALSE}
+
+#Compute Standard errors :
+
+res$se_nde<-(res$NDE_97.5 - res$NDE_2.5)/3.92
+
+# Meta-analysis
+nocc_nde<-rma(NDE,sei=se_nde,data=res)
+
+print(nocc_nde)
+
+#Forestplot
+forest(nocc_nde, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab="NDE", header="City according to the climate")
+
+text(-0.15, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+
+
+```
+
+```{r forest_cde,echo=FALSE}
+
+# clrs <- fpColors(box="royalblue",line="darkblue", summary="royalblue")
+# nde<-matrix(NA, nrow = 15, ncol = 3)
+# rownames(nde)<-results[,1]
+# colnames(nde)<-c("mean","lower","upper")
+# 
+# nde[,1]<-res[,2]
+# nde[,2]<-res[,3]
+# nde[,3]<-res[,4]
+# 
+# tabletext <- cbind(rownames(nde),
+#                    sprintf("%.2f", nde[,"mean"]))
+# 
+# # png(file="C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/mortality/nonaccidental/forestplot_nde.png", width=600, height=350)
+# 
+# forestplot(tabletext, 
+#            rbind(nde),
+#            col=clrs,xlog=TRUE,
+#            xlab="NDE")
+# 
+# dev.off()
+```
+
+
+***Natural Indirect Effect***
+```{r forest_rint,echo=FALSE}
+res$se_nie<-(res$NIE_97.5 - res$NIE_2.5)/3.92
+
+nocc_nie<-rma(NIE,sei=se_nie,data=res)
+
+print(nocc_nie)
+
+forest(nocc_nie, slab = res$city, refline=1,xlab="NIE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), header="City according to the climate")
+text(0.85, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+
+# clrs <- fpColors(box="royalblue",line="darkblue", summary="royalblue")
+# nie<-matrix(NA, nrow = 15, ncol = 3)
+# rownames(nie)<-results[,1]
+# colnames(nie)<-c("mean","lower","upper")
+# 
+# nie[,1]<-res[,5]
+# nie[,2]<-res[,6]
+# nie[,3]<-res[,7]
+# 
+# tabletext <- cbind(rownames(nie),
+#                    sprintf("%.2f", nie[,"mean"]))
+# 
+# # png(file="C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/mortality/nonaccidental/forestplot_nie.png", width=600, height=350)
+# 
+# forestplot(tabletext, 
+#            rbind(nie),
+#            col=clrs,xlog=TRUE,
+#            xlab="NIE")
+
+# dev.off()
+
+### put the 3 plot together 
+
+
+par(mfrow=c(1,3))
+forest(nocc_te, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab="TE", header="City according to the climate")
+text(-0.04, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+forest(nocc_nde, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab="NDE", header="City according to the climate")
+
+text(0.05, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+
+forest(nocc_nie, slab = res$city, refline=1,xlab="NIE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), header="City according to the climate")
+text(0.87, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, font=4)
+
+```
+
+
+## Analysis On Cardiovascular Mortality
+
+
+```{r bootcard, echo=FALSE}
+
+  # start bootstrap
+     
+  nreps=700 #number of bootstrap reps
+  results_cv<-matrix(NA,nrow = 15,ncol=11)
+  colnames(results_cv)<-c("city","NDE","NDE_2.5","NDE_97.5","NIE","NIE_2.5","NIE_97.5","PMM","TE","TE_2.5","TE_97.5")
+  
+for (i in (1:length(villes_s))){
+  boot.nde<- rep(NA,nreps)
+  boot.nie <- rep(NA,nreps)
+  boot.pmm <- rep(NA,nreps)
+  boot.te <- rep(NA,nreps)
+  for (rep in 1:nreps)
+      
+    {
+      dat_resample <- sample(1:nrow(villes_s[[i]]),nrow(villes_s[[i]]),replace=T)
+      dat_boot <- villes_s[[i]][dat_resample,]
+        
+      # outcome model - Poisson Regression: Mortality, HW and O3
+      m.outcome<-glm(cv_tot~heat_wave+o3+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot,family=quasipoisson)
+      
+      # mediator model - multinomial linear regression
+      m.mediator<-lm(o3~heat_wave+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot) 
+      
+      # save coefficients
+      theta1<-coef(m.outcome)[2]
+      
+      theta2<-coef(m.outcome)[3]
+     
+      beta1<-coef(m.mediator)[2]
+      
+      # estimate CDE and NIE
+      
+      boot.nde[rep] <- exp(theta1) #NDE
+      
+      boot.nie[rep] <-exp(theta2*beta1) #NIE 
+      
+      boot.te[rep]<- boot.nde[rep]*boot.nie[rep] #TE 
+        
+      boot.pmm[rep] <-boot.nde[rep]*(boot.nie[rep]-1)/(boot.nde[rep]*boot.nie[rep]-1) #PMM 
+                   
+      
+    } #end bootstrap
+
+  results_cv[i,1]<-cities[[i]]
+  results_cv[i,2]<-median(boot.nde, na.rm=T)
+  results_cv[i,3]<-quantile(boot.nde, 0.025, na.rm=T)
+  results_cv[i,4]<-quantile(boot.nde, 0.975, na.rm=T)
+  results_cv[i,5]<-median(boot.nie, na.rm=T)
+  results_cv[i,6]<-quantile(boot.nie, 0.025, na.rm=T)
+  results_cv[i,7]<-quantile(boot.nie, 0.975, na.rm=T)
+  results_cv[i,8]<-median(boot.pmm, na.rm=T)
+  results_cv[i,9]<-median(boot.te, na.rm=T)
+  results_cv[i,10]<-quantile(boot.te, 0.025, na.rm=T)
+  results_cv[i,11]<-quantile(boot.te, 0.975, na.rm=T)     
+       }
+  
+  # output CDE and NIE and confidence intervals
+  
+```
+
+***Results:***
+
+```{r boot_rescard, echo=FALSE}
+options(scipen = 999)
+res_cv<-data.frame(results_cv)
+
+for (i in (2:11)){
+res_cv[,i]<-as.numeric(as.character(res_cv[,i]))
+}
+
+res_cv[,2:11]<-round(res_cv[,2:11],digits = 4)
+
+# Sorting results according to the climate profile
+res_cv$climate<-ifelse (res_cv$city %in% oceanic,"oceanic", ifelse (res_cv$city %in% temperate_oceanic,"temperate_oceanic", ifelse (res_cv$city %in% mediterraean,"mediterranean","semi_continental")))
+
+res_cv<-res_cv[order(res_cv$climate, decreasing = TRUE),]
+
+
+kable(res_cv[,-12])%>%kable_styling()%>%
+  column_spec(2, bold = T, border_right = T)%>%
+  column_spec(5, border_right = T)%>%
+  column_spec(8, border_right = T)%>%
+  column_spec(9, border_right = T)%>%
+  pack_rows("Temperate Oceanic", 1, 2) %>%
+  pack_rows("Semi-Continental", 3, 7)%>%
+  pack_rows("Oceanic", 8, 12)%>%
+  pack_rows("Mediterranean", 13, 15)
+
+write_xlsx(res_cv,"C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/mortality/cardiovascular/updated_results.xlsx")
+
+```
+
+
+### Meta-Analysis and Forestplot
+
+***Total Effect***
+```{r forest_cdecard,echo=FALSE}
+
+#Compute Standard errors :
+
+res_cv$se_te<-(res_cv$TE_97.5 - res_cv$TE_2.5)/3.92
+
+# Meta-analysis
+cv_te<-rma(TE,sei=se_te,data=res_cv)
+
+print(cv_te)
+
+#Forestplot
+forest(cv_te, slab = res$city, refline=1,xlab="TE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), header="City according to the climate")
+text(-0.6, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), cex=0.8, pos=1, font=4)
+
+
+```
+
+
+***Natural Direct Effect***
+```{r forest_cdecard,echo=FALSE}
+
+#Compute Standard errors :
+
+res_cv$se_nde<-(res_cv$NDE_97.5 - res_cv$NDE_2.5)/3.92
+
+# Meta-analysis
+cv_nde<-rma(NDE,sei=se_nde,data=res_cv)
+
+print(cv_nde)
+
+#Forestplot
+forest(cv_nde, slab = res_cv$city, refline=1,xlab="NDE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 0.8, header="City according to the climate")
+text(-0.6, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), cex=0.8, pos=1, font=4)
+
+
+```
+
+
+***Natural Indirect Effect***
+```{r forest_rintcard,echo=FALSE}
+
+res_cv$se_nie<-(res_cv$NIE_97.5 - res_cv$NIE_2.5)/3.92
+
+cv_nie<-rma(res_cv$NIE,sei=res_cv$se_nie,data=res_cv)
+
+print(cv_nie)
+
+forest(cv_nie, slab = res_cv$city, refline=1,xlab="NIE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 0.8, header="City according to the climate")
+text(0.7, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), cex=0.8, pos=1, font=4)
+
+
+
+```
+
+
+## Analysis On Respiratory Mortality
+
+
+
+```{r bootres, echo=FALSE}
+  # start bootstrap
+     
+  nreps=700 #number of bootstrap reps
+  results_respi<-matrix(NA,nrow = 15,ncol=11)
+  colnames(results_respi)<-c("city","NDE","NDE_2.5","NDE_97.5","NIE","NIE_2.5","NIE_97.5","PMM","TE","TE_2.5","TE_97.5")
+  
+for (i in (1:length(villes_s))){
+  boot.nde<- rep(NA,nreps)
+  boot.nie <- rep(NA,nreps)
+  boot.pmm <- rep(NA,nreps)
+  boot.te <- rep(NA,nreps)
+  for (rep in 1:nreps)
+      
+    {
+      dat_resample <- sample(1:nrow(villes_s[[i]]),nrow(villes_s[[i]]),replace=T)
+      dat_boot <- villes_s[[i]][dat_resample,]
+        
+      # outcome model - Poisson Regression: Mortality, HW and O3
+      m.outcome<-glm(respi_tot~heat_wave+o3+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot,family=quasipoisson)
+      
+      # mediator model - multinomial linear regression
+      m.mediator<-lm(o3~heat_wave+no2moy+ns(year,df=4)+ns(day,df=4)+Jours+Vacances+hol,data=dat_boot) 
+      
+      # save coefficients
+      theta1<-coef(m.outcome)[2]
+      
+      theta2<-coef(m.outcome)[3]
+     
+      beta1<-coef(m.mediator)[2]
+      
+      # estimate CDE and NIE
+      
+      boot.nde[rep] <- exp(theta1) #NDE
+      
+      boot.nie[rep] <-exp(theta2*beta1) #NIE 
+      
+      boot.te[rep] <-boot.nde[rep]*boot.nie[rep] #TE
+      
+      boot.pmm[rep] <-boot.nde[rep]*(boot.nie[rep]-1)/(boot.nde[rep]*boot.nie[rep]-1) #NIE 
+                   
+      
+    } #end bootstrap
+
+  results_respi[i,1]<-cities[[i]]
+  results_respi[i,2]<-median(boot.nde, na.rm=T)
+  results_respi[i,3]<-quantile(boot.nde, 0.025, na.rm=T)
+  results_respi[i,4]<-quantile(boot.nde, 0.975, na.rm=T)
+  results_respi[i,5]<-median(boot.nie, na.rm=T)
+  results_respi[i,6]<-quantile(boot.nie, 0.025, na.rm=T)
+  results_respi[i,7]<-quantile(boot.nie, 0.975, na.rm=T)
+  results_respi[i,8]<-median(boot.pmm, na.rm=T)
+  results_respi[i,9]<-median(boot.te, na.rm=T)
+  results_respi[i,10]<-quantile(boot.te, 0.025, na.rm=T)
+  results_respi[i,11]<-quantile(boot.te, 0.975, na.rm=T)     
+  
+     }
+  
+  # output CDE and NIE and confidence intervals
+
+```
+
+***Results:***
+
+```{r boot_respi, echo=FALSE}
+
+res_respi<-data.frame(results_respi)
+
+for (i in (2:11)){
+res_respi[,i]<-as.numeric(as.character(res_respi[,i]))
+}
+
+res_respi[,2:11]<-round(res_respi[,2:11],digits = 4)
+
+# Sorting results according to the climate profile
+res_respi$climate<-ifelse (res_respi$city %in% oceanic,"oceanic", ifelse (res_respi$city %in% temperate_oceanic,"temperate_oceanic", ifelse (res_respi$city %in% mediterraean,"mediterranean","semi_continental")))
+
+res_respi<-res_respi[order(res_respi$climate, decreasing = TRUE),]
+
+
+kable(res_respi[,-12])%>%kable_styling()%>%
+  column_spec(2, bold = T, border_right = T)%>%
+  column_spec(5, border_right = T)%>%
+  column_spec(8, border_right = T)%>%
+  column_spec(9, border_right = T)%>%
+  pack_rows("Temperate Oceanic", 1, 2) %>%
+  pack_rows("Semi-Continental", 3, 7)%>%
+  pack_rows("Oceanic", 8, 12)%>%
+  pack_rows("Mediterranean", 13, 15)
+
+
+
+write_xlsx(res_respi,"C:/Users/Anna/Dropbox/Heat wave and O3/Meteo France/mortality/respi/updated_results.xlsx")
+```
+
+
+### Meta-analysis and Forestplot
+
+***Total Effect***
+```{r forest_cderespi,echo=FALSE}
+#Compute Standard errors :
+
+res_respi$se_te<-(res_respi$TE_97.5 - res_respi$TE_2.5)/3.92
+
+# Meta-analysis
+res_te<-rma(res_respi$TE,sei=res_respi$se_te,data=res_respi)
+
+print(res_te)
+
+#Forestplot
+forest(res_te, slab = res$city, refline=1,xlab="TE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 0.8, header="City according to the climate")
+text(-2, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, cex  = 0.8, font=4)
+
+```
+
+***Natural Direct Effect***
+```{r forest_cderespi,echo=FALSE}
+#Compute Standard errors :
+
+res_respi$se_nde<-(res_respi$NDE_97.5 - res_respi$NDE_2.5)/3.92
+
+# Meta-analysis
+res_nde<-rma(res_respi$NDE,sei=res_respi$se_nde,data=res_respi)
+
+print(res_nde)
+
+#Forestplot
+forest(res_nde, slab = res$city, refline=1,xlab="NDE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 0.8, header="City according to the climate")
+text(-2, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, cex  = 0.8, font=4)
+
+
+
+```
+
+
+***Natural Indirect Effect***
+```{r forest_rintrespi,echo=FALSE}
+
+res_respi$se_nie<-(res_respi$NIE_97.5 - res_respi$NIE_2.5)/3.92
+
+res_nie<-rma(res_respi$NIE,sei=res_respi$se_nie,data=res_respi)
+
+print(res_nie)
+
+forest(res_nie, slab = res$city, refline=1,xlab="NIE", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 0.8, header="City according to the climate")
+text(0.15, c(23,19,12,5), c("Temperate oceanic", "Semi-continental ",
+                            "Oceanic               ","Mediterranean    "), pos=1, cex  = 0.8, font=4)
+
+
+```
+
+
+```{r, echo=FALSE}
+
+## To export at 900x800
+par(mfrow=c(3,3),mai=c(0.3,0.6,0.2,0.02))
+## NON-ACCIDENTAL MORTALITY
+forest(nocc_te, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab=" ", cex  = 1)
+text(0.03, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, font=3, cex  = 1)
+mtext("Non-accidental Mortality\n\n\n", side=2,cex=0.7, font=4)
+mtext(" I²=51.87%", side=1,cex=0.7, font=3,adj=0)
+mtext("TE", side=3,cex=1, font=2)
+forest(nocc_nde, slab = res$city, ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), refline=1,xlab=" ", cex  = 1)
+text(0.15, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, font=3, cex  = 1)
+mtext(" I²=48.88%", side=1,cex=0.7, font=3,adj=0)
+mtext("NDE", side=3,cex=1, font=2)
+forest(nocc_nie, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(0.87, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, font=3, cex  = 1)
+mtext(" I²=66.64%", side=1,cex=0.7, font=3,adj=0)
+mtext("NIE", side=3,cex=1, font=2)
+## CARDIOVASCUAL MORTALITY
+forest(cv_te, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex=1)
+text(-0.50, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), cex=1, pos=1, font=3)
+mtext("Cardiovascular Mortality\n\n\n", side=2,cex=0.7, font=4)
+mtext(" I²=49.69%", side=1,cex=0.7, font=3,adj=0)
+forest(cv_nde, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(-0.45, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), cex=1, pos=1, font=3)
+mtext(" I²=51.91%", side=1,cex=0.7, font=3,adj=0)
+forest(cv_nie, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(0.72, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), cex=1, pos=1, font=3)
+mtext(" I²=42.75%", side=1,cex=0.7, font=3,adj=0)
+## RESPIRATORY MORTALITY
+forest(res_te, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(-1.6, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, cex  = 1, font=3)
+mtext("Respiratory Mortality\n\n\n", side=2,cex=0.7, font=4)
+mtext(" I²=20.90%", side=1,cex=0.7, font=3,adj=0)
+forest(res_nde, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(-1.85, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, cex  = 1, font=3)
+mtext(" I²=14.51%", side=1,cex=0.7, font=3,adj=0)
+forest(res_nie, slab = res$city, refline=1,xlab=" ", ylim=c(-2.5, 25), rows=c(21:20, 17:13, 10:6,3:1), cex  = 1)
+text(0.235, c(23.5,19.5,12.5,5.5), c("Temperate oceanic", "Semi-continental ","Oceanic                ","Mediterranean    "), pos=1, cex  = 1, font=3)
+mtext(" I²=46.09%", side=1,cex=0.7, font=3,adj=0)
+
+
+
+
+```
+
